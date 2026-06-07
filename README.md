@@ -1,4 +1,12 @@
 # Semantic Audio Map
+![Status](https://img.shields.io/badge/status-active-brightgreen)
+![Stage](https://img.shields.io/badge/stage-prototype-orange)
+![Input](https://img.shields.io/badge/input-voice%20memo-red)
+![Output](https://img.shields.io/badge/output-editable%20mind%20map-blue)
+![Framework](https://img.shields.io/badge/framework-Next.js%2016-black)
+![Language](https://img.shields.io/badge/language-TypeScript-3178C6)
+![AI](https://img.shields.io/badge/AI-Whisper%20%2B%20GPT-10A37F)
+![Canvas](https://img.shields.io/badge/canvas-React%20Flow-purple)
 
 A small Next.js prototype that turns a voice memo into an editable mind map.
 
