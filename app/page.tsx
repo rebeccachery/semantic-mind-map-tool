@@ -4,14 +4,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Recorder from "@/components/Recorder";
 import MindMap, { type MindMapValue } from "@/components/MindMap";
 import { radialLayout } from "@/lib/layout";
-import { clearMap, loadMap, saveMap } from "@/lib/storage";
-import type { ExtractedMap, SavedMap } from "@/lib/types";
+import { mergeGraph, mergeLayout, prefixNodeIds } from "@/lib/merge";
+import { clearMap, joinTranscripts, loadMap, saveMap } from "@/lib/storage";
+import type { ExtractedMap, MergeDelta, SavedMap } from "@/lib/types";
 
 type Status =
   | { kind: "idle" }
   | { kind: "transcribing" }
   | { kind: "extracting" }
+  | { kind: "merging" }
   | { kind: "ready" }
+  | { kind: "info"; message: string }
   | { kind: "error"; message: string };
 
 export default function Home() {
@@ -19,6 +22,7 @@ export default function Home() {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [showTranscript, setShowTranscript] = useState(false);
   const [resetKey, setResetKey] = useState(0);
+  const [syncKey, setSyncKey] = useState(0);
   const hydratedRef = useRef(false);
 
   useEffect(() => {
@@ -34,9 +38,11 @@ export default function Home() {
 
   const handleMapChange = useCallback((value: MindMapValue) => {
     setMap((prev) => {
-      const transcript = prev?.transcript ?? "";
+      if (!prev) return prev;
+      const memos = prev.memos ?? [];
       const next: SavedMap = {
-        transcript,
+        transcript: joinTranscripts(memos),
+        memos,
         nodes: value.nodes,
         edges: value.edges,
         updatedAt: Date.now(),
@@ -64,23 +70,92 @@ export default function Home() {
         throw new Error("Transcription returned no text. Try a longer clip.");
       }
 
-      setStatus({ kind: "extracting" });
-      const extractRes = await fetch("/api/extract", {
+      if (!map || map.nodes.length === 0) {
+        setStatus({ kind: "extracting" });
+        const extractRes = await fetch("/api/extract", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        if (!extractRes.ok) {
+          const err = await extractRes.json().catch(() => ({}));
+          throw new Error(err.error ?? "Idea extraction failed.");
+        }
+        const extracted = (await extractRes.json()) as ExtractedMap;
+
+        const laidOut = radialLayout(extracted);
+        const memoId = `memo-${Date.now()}`;
+        const memos = [{ id: memoId, transcript: text, addedAt: Date.now() }];
+        const next: SavedMap = {
+          ...laidOut,
+          memos,
+          transcript: joinTranscripts(memos),
+        };
+        setMap(next);
+        saveMap(next);
+        setResetKey((k) => k + 1);
+        setStatus({ kind: "ready" });
+        return;
+      }
+
+      setStatus({ kind: "merging" });
+      const mergeRes = await fetch("/api/merge", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({
+          text,
+          existing: {
+            nodes: map.nodes.map(({ id, label, isRoot }) => ({
+              id,
+              label,
+              isRoot,
+            })),
+            edges: map.edges.map(({ source, target, label }) => ({
+              source,
+              target,
+              label,
+            })),
+          },
+        }),
       });
-      if (!extractRes.ok) {
-        const err = await extractRes.json().catch(() => ({}));
-        throw new Error(err.error ?? "Idea extraction failed.");
+      if (!mergeRes.ok) {
+        const err = await mergeRes.json().catch(() => ({}));
+        throw new Error(err.error ?? "Merge failed.");
       }
-      const extracted = (await extractRes.json()) as ExtractedMap;
+      const delta = (await mergeRes.json()) as MergeDelta;
 
-      const laidOut = radialLayout(extracted);
-      const next: SavedMap = { ...laidOut, transcript: text };
+      if (delta.nodes.length === 0) {
+        setStatus({
+          kind: "info",
+          message: "No new ideas to add — your map already covers this memo.",
+        });
+        return;
+      }
+
+      const memoId = `memo-${Date.now()}`;
+      const prefixed = prefixNodeIds(delta, memoId);
+      const merged = mergeGraph(map, prefixed);
+      const memoIndex = (map.memos ?? []).length;
+      const nodes = mergeLayout(
+        map.nodes,
+        prefixed.nodes,
+        prefixed.edges,
+        memoIndex
+      );
+      const memos = [
+        ...(map.memos ?? []),
+        { id: memoId, transcript: text, addedAt: Date.now() },
+      ];
+      const next: SavedMap = {
+        transcript: joinTranscripts(memos),
+        memos,
+        nodes,
+        edges: merged.edges,
+        updatedAt: Date.now(),
+      };
       setMap(next);
       saveMap(next);
-      setResetKey((k) => k + 1);
+      setSyncKey((k) => k + 1);
       setStatus({ kind: "ready" });
     } catch (e) {
       const message =
@@ -97,18 +172,32 @@ export default function Home() {
     setResetKey((k) => k + 1);
   }
 
-  const busy = status.kind === "transcribing" || status.kind === "extracting";
+  const busy =
+    status.kind === "transcribing" ||
+    status.kind === "extracting" ||
+    status.kind === "merging";
+
+  const memoCount = map?.memos?.length ?? 0;
 
   return (
     <div className="flex min-h-screen flex-col bg-zinc-50 dark:bg-zinc-950">
       <header className="border-b border-zinc-200 bg-white/70 px-6 py-4 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/70">
         <div className="mx-auto flex max-w-6xl flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
-              Semantic Audio Map
-            </h1>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+                Semantic Audio Map
+              </h1>
+              {memoCount > 1 && (
+                <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                  {memoCount} memos
+                </span>
+              )}
+            </div>
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              Record a voice memo and watch it become an editable mind map.
+              {map && map.nodes.length > 0
+                ? "Record another memo to grow this map."
+                : "Record a voice memo and watch it become an editable mind map."}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -136,23 +225,46 @@ export default function Home() {
             {status.kind === "extracting" && (
               <Spinner label="Extracting ideas..." />
             )}
+            {status.kind === "merging" && (
+              <Spinner label="Merging into map..." />
+            )}
             {status.kind === "error" && (
               <p className="text-red-600 dark:text-red-400">{status.message}</p>
             )}
-            {map?.transcript && (
+            {status.kind === "info" && (
+              <p className="text-amber-700 dark:text-amber-400">
+                {status.message}
+              </p>
+            )}
+            {memoCount > 0 && (
               <button
                 type="button"
                 onClick={() => setShowTranscript((v) => !v)}
                 className="text-zinc-500 underline-offset-2 hover:underline dark:text-zinc-400"
               >
                 {showTranscript ? "Hide" : "Show"} transcript
+                {memoCount > 1 ? "s" : ""}
               </button>
             )}
           </div>
-          {showTranscript && map?.transcript && (
-            <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
-              {map.transcript}
-            </pre>
+          {showTranscript && map?.memos && map.memos.length > 0 && (
+            <div className="mt-3 max-h-48 space-y-3 overflow-auto">
+              {map.memos.map((memo, index) => (
+                <div
+                  key={memo.id}
+                  className="rounded-lg border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900"
+                >
+                  {map.memos.length > 1 && (
+                    <div className="border-b border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+                      Memo {index + 1}
+                    </div>
+                  )}
+                  <pre className="whitespace-pre-wrap p-3 text-xs text-zinc-700 dark:text-zinc-300">
+                    {memo.transcript}
+                  </pre>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       </section>
@@ -162,6 +274,7 @@ export default function Home() {
           <div className="h-[calc(100vh-12rem)] min-h-[480px] w-full">
             <MindMap
               resetKey={resetKey}
+              syncKey={syncKey}
               initialNodes={map.nodes}
               initialEdges={map.edges}
               onChange={handleMapChange}

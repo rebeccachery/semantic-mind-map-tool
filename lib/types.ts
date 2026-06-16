@@ -15,8 +15,20 @@ export type ExtractedMap = {
   edges: MindMapEdge[];
 };
 
+export type MemoEntry = {
+  id: string;
+  transcript: string;
+  addedAt: number;
+};
+
+export type MergeDelta = {
+  nodes: MindMapNode[];
+  edges: MindMapEdge[];
+};
+
 export type SavedMap = {
   transcript: string;
+  memos: MemoEntry[];
   nodes: Array<{
     id: string;
     label: string;

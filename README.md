@@ -18,7 +18,8 @@ A small Next.js prototype that turns a voice memo into an editable mind map.
    connections, and select + Backspace to delete.
 
 The current map is auto-saved to `localStorage` in your browser — refresh and
-your work is still there.
+your work is still there. Record additional memos to **grow** the same map;
+new ideas are merged in semantically and linked to related existing nodes.
 
 ## Stack
 
@@ -60,14 +61,17 @@ mind map.
 - **Delete**: select a node or edge and press `Backspace` or `Delete`.
 - **Re-arrange**: drag nodes anywhere on the canvas.
 - **New map**: click **New map** in the header to clear and start over.
+- **Grow the map**: with a map open, record or upload another memo — new ideas
+  are added and connected to the existing graph (duplicates are skipped).
 
 ## Project layout
 
 ```
 app/
-  page.tsx                  Main UI: orchestrates record -> transcribe -> extract -> render
+  page.tsx                  Main UI: orchestrates record -> transcribe -> extract/merge -> render
   api/transcribe/route.ts   POST audio -> { text } via OpenAI Whisper
-  api/extract/route.ts      POST text -> { nodes, edges } via GPT structured output
+  api/extract/route.ts      POST text -> { nodes, edges } via GPT structured output (first memo)
+  api/merge/route.ts        POST text + existing map -> delta nodes/edges (subsequent memos)
 components/
   Recorder.tsx              MediaRecorder + file upload
   MindMap.tsx               React Flow canvas
@@ -75,7 +79,8 @@ components/
 lib/
   openai.ts                 Shared OpenAI client
   layout.ts                 Radial auto-layout for fresh maps
-  storage.ts                localStorage helpers
+  merge.ts                  Graph merge, id prefixing, incremental layout
+  storage.ts                localStorage helpers (+ memo history migration)
   types.ts                  Shared types
 ```
 
@@ -90,7 +95,5 @@ lib/
 
 ## Useful follow-ups
 
-- Export the map (PNG / JSON / Markdown).
-- Merge multiple memos into one growing map.
 - Server-side persistence + auth.
 - Streaming transcription for long-form content.

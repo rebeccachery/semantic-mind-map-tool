@@ -41,6 +41,8 @@ export type MindMapValue = {
 type MindMapProps = {
   /** Bumped whenever the parent supplies a fresh map and wants to reset state. */
   resetKey: string | number;
+  /** Bumped when new nodes/edges are merged in without a full reset. */
+  syncKey?: string | number;
   initialNodes: SavedMap["nodes"];
   initialEdges: SavedMap["edges"];
   onChange?: (value: MindMapValue) => void;
@@ -77,6 +79,7 @@ function buildFlowEdges(input: SavedMap["edges"]): Edge[] {
 }
 
 function MindMapInner({
+  syncKey,
   initialNodes,
   initialEdges,
   onChange,
@@ -87,6 +90,12 @@ function MindMapInner({
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(
     buildFlowEdges(initialEdges)
   );
+
+  useEffect(() => {
+    if (syncKey === undefined) return;
+    setNodes(buildFlowNodes(initialNodes));
+    setEdges(buildFlowEdges(initialEdges));
+  }, [syncKey, initialNodes, initialEdges, setNodes, setEdges]);
 
   const handleLabelChange = useCallback(
     (id: string, label: string) => {
@@ -267,11 +276,11 @@ function MindMapInner({
   );
 }
 
-export default function MindMap({ resetKey, ...rest }: MindMapProps) {
+export default function MindMap({ resetKey, syncKey, ...rest }: MindMapProps) {
   // Remounting via key gives us a clean slate whenever the parent loads a new map.
   return (
     <ReactFlowProvider>
-      <MindMapInner key={resetKey} {...rest} />
+      <MindMapInner key={resetKey} syncKey={syncKey} {...rest} />
     </ReactFlowProvider>
   );
 }

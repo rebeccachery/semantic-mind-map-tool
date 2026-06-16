@@ -47,6 +47,7 @@ export function radialLayout(map: ExtractedMap): SavedMap {
 
   return {
     transcript: "",
+    memos: [],
     nodes,
     edges,
     updatedAt: Date.now(),
